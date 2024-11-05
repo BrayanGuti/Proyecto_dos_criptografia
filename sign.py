@@ -2,9 +2,9 @@ from hashlib import shake_256
 from hashlib import shake_128
 import numpy as np
 import os
-from BuildAugmentedMatrix import BuildAugmentedMatrix
-from generate_C_L_Q1 import generate_C_L_Q1
-from GaussianElimination import GaussianElimination
+from Func.BuildAugmentedMatrix import BuildAugmentedMatrix
+from Func.generate_C_L_Q1 import generate_C_L_Q1
+from Func.GaussianElimination import GaussianElimination
 
 
 def H(private_seed, m, v):
