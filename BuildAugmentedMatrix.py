@@ -24,6 +24,7 @@ def FindPk2(k, Q1, v, m):
 
 def BuildAugmentedMatrix(C, L, Q1, T, h, v):
     m = len(h)
+    Q1 = np.array(Q1)
 
     # Cambiamos el tipo de datos a int64 para evitar desbordamiento
     RHS = [int(h[i]) - int(C[i]) - sum(int(L[i][j]) * int(v[j] if j < len(v) else 0) for j in range(len(L[0])))
@@ -43,5 +44,6 @@ def BuildAugmentedMatrix(C, L, Q1, T, h, v):
     
     LHS = np.array(LHS, dtype=np.int64)
     RHS = np.array(RHS, dtype=np.int64).reshape(-1, 1)
+    augmented_matrix = np.hstack((LHS, RHS))
 
-    return LHS, RHS
+    return augmented_matrix

@@ -3,9 +3,9 @@ from hashlib import shake_128
 import numpy as np
 import os
 from BuildAugmentedMatrix import BuildAugmentedMatrix
+from generate_C_L_Q1 import generate_C_L_Q1
+from GaussianElimination import GaussianElimination
 
-
-# Parámetros proporcionados
 
 def H(private_seed, m, v):
     # Paso 1: Calcular la salida de hash con shake_256 de longitud 32 + ceil(m * v / 8) bytes
@@ -40,50 +40,10 @@ def H(private_seed, m, v):
     
     return public_seed, T
 
-def generate_public_map_G(public_seed: bytes, m: int, n: int, v: int):
-    """
-    Genera la mayor parte del mapa público utilizando SHAKE128, sin pasar el índice como argumento.
-    
-    Args:
-        public_seed (bytes): La semilla pública a expandir.
-        m (int): Número de variables de aceite (oil variables).
-        n (int): Número total de variables (m + v).
-        v (int): Número de variables de vinagre (vinegar variables).
-    
-    Returns:
-        Tuple de bytes arrays para C, L, y Q1 completos.
-    """
-    # Calcular el tamaño de salida necesario en bytes
-    block_size = 2 * (1 + n + v * (v + 1) // 2 + v * m)  # Tamaño de cada bloque de 16 filas
-    num_blocks = (m + 15) // 16  # Número de bloques necesarios, redondeado hacia arriba
-    
-    # Inicializar buffers para almacenar C, L, y Q1
-    C_bytes = bytearray()
-    L_bytes = bytearray()
-    Q1_bytes = bytearray()
-    
-    # Generar cada bloque y concatenar al resultado
-    for i in range(num_blocks):
-        # Concatenar public_seed con el índice actual i (como byte único)
-        seed_input = public_seed + i.to_bytes(1, 'big')
-        
-        # Inicializar SHAKE128 y generar el bloque de bytes requerido
-        shake = shake_128()
-        shake.update(seed_input)
-        output = shake.digest(block_size)
-        
-        # Extraer y almacenar en los buffers correspondientes
-        C_bytes.extend(output[:2 * m])  # Primeros 2*m bytes para C
-        L_bytes.extend(output[2 * m:2 * m + 2 * n])  # Próximos 2*n bytes para L
-        Q1_bytes.extend(output[2 * m + 2 * n:])  # Resto para Q1
-    
-    return bytes(C_bytes), bytes(L_bytes), bytes(Q1_bytes)
-
 def generate_salt(length=16):
     # Genera un salt de la longitud especificada (16 bytes por defecto)
     salt = os.urandom(length)
     return salt
-
 
 def generate_hash_digest_H(message: bytes, salt: bytes, m: int, r: int):
     """
@@ -112,6 +72,52 @@ def generate_hash_digest_H(message: bytes, salt: bytes, m: int, r: int):
     
     return hash_digest
 
+def sign(private_seed: bytes, message_bytes: bytes, m: int, v: int, r: int, n: int):
+    # Calcular public_seed y T
+    public_seed, T = H(private_seed, m, v)
+
+    # Convertir C, L y Q1 a arreglos de NumPy
+    C, L, Q1 = generate_C_L_Q1(public_seed, m, n, v)
+
+
+    # Generar un salt aleatorio
+    salt = generate_salt()
+
+    # Calcular el hash digest h
+    hash_digest = generate_hash_digest_H(message_bytes, salt, m, r)
+    hash_digest_int = [int(byte) for byte in hash_digest]
+    
+
+    i = 0
+    # Repetir hasta encontrar una solución válida
+    solution_found = False
+    while not solution_found:
+        print(f'Iteración {i}')
+        i += 1
+        
+        # 6. Generar valores aleatorios para las variables de vinagre
+        vinegar_variables = os.urandom(r * v // 8)
+        vinegar_variables_int = [int(byte) for byte in vinegar_variables]
+
+        
+        # 7. Construir la matriz aumentada para el sistema lineal
+        augmented_matrix = BuildAugmentedMatrix(C, L, Q1, T, hash_digest_int, vinegar_variables_int)
+
+        # 8-9. Aplicar eliminación gaussiana en la matriz aumentada
+        solution_vector = GaussianElimination(augmented_matrix)
+
+        # 10-11. Si el sistema tiene una solución única, ensamblar s' = (v || o)
+        if solution_vector is not None:
+            oil_variables = solution_vector
+            s_prime = np.concatenate((vinegar_variables, oil_variables))
+            solution_found = True
+
+    # 14. Calcular s = (1v -T 0 1m) * s'
+    s = np.dot(np.block([[np.identity(v, dtype=int), -np.array(T, dtype=int)],
+                         [np.zeros((m, v), dtype=int), np.identity(m, dtype=int)]]), s_prime)
+
+    # Devolver la firma y el salt
+    return s, salt
 
 
 # Ejemplo de uso
@@ -129,65 +135,4 @@ message_bytes = message.encode('utf-8')
 # LUOV-7-83-283 
 # LUOV-7-110-374
 
-# Calcular public_seed y T
-public_seed, T = H(private_seed, m, v)
-
-# Convertir C, L y Q1 a arreglos de NumPy
-C, L, Q1 = generate_public_map_G(public_seed, m, n, v)
-
-C_list = list(C)
-L_list = list(L)
-Q1_list = list(Q1)
-
-# Generar un salt aleatorio
-salt = generate_salt()
-
-# Calcular el hash digest h
-hash_digest = generate_hash_digest_H(message_bytes, salt, m, r)
-a, b = BuildAugmentedMatrix(C_list, L_list, Q1_list, T, hash_digest, v)
-
-
-def sign(private_seed, message_bytes, m, v, r, C_array, L_array, Q1_array, T):
-    # Calcular public_seed y T
-    public_seed, T = H(private_seed, m, v)
-
-    # Convertir C, L y Q1 a arreglos de NumPy
-    C, L, Q1 = generate_public_map_G(public_seed, m, n, v)
-
-    C_list = list(C)
-    L_list = list(L)
-    Q1_list = list(Q1)
-
-    # Generar un salt aleatorio
-    salt = generate_salt()
-
-    # Calcular el hash digest h
-    hash_digest = generate_hash_digest_H(message_bytes, salt, m, r)
-    
-    # Generar un salt aleatorio
-    salt = generate_salt()
-    
-    # Repetir hasta encontrar una solución válida
-    solution_found = False
-    while not solution_found:
-        # 6. Generar valores aleatorios para las variables de vinagre
-        vinegar_variables = np.random.randint(0, 2, size=(v,), dtype=np.uint8)
-        
-        # 7. Construir la matriz aumentada para el sistema lineal
-        augmented_matrix = BuildAugmentedMatrix(C_array, L_array, Q1_array, T, hash_digest, vinegar_variables)
-        
-        # 8-9. Aplicar eliminación gaussiana en la matriz aumentada
-        solution_vector = GaussianElimination(augmented_matrix)
-        
-        # 10-11. Si el sistema tiene una solución única, ensamblar s' = (v || o)
-        if solution_vector is not None:
-            oil_variables = solution_vector
-            s_prime = np.concatenate((vinegar_variables, oil_variables))
-            solution_found = True
-
-    # 14. Calcular s = (1v -T 0 1m) * s'
-    s = np.dot(np.block([[np.identity(v, dtype=int), -np.array(T, dtype=int)],
-                         [np.zeros((m, v), dtype=int), np.identity(m, dtype=int)]]), s_prime)
-
-    # Devolver la firma y el salt
-    return s, salt
+sign(private_seed, message_bytes, m, v, r, n)
